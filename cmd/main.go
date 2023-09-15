@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	_ "github.com/yourusername/caddy-tracker/pkg/tracker"
+	_ "github.com/yourusername/your_project/pkg/tracker"  // Replace with your module path
 )
 
 func main() {
-	// You can add some local testing code here or leave it empty
+	// Local testing code here
+	fmt.Println("This is a standalone application to test or demonstrate the Caddy module.")
 }
