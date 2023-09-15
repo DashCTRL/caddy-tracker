@@ -1,20 +1,25 @@
 package main
 
 import (
-	"net/http"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/logging"
+	"github.com/luludotdev/caddy-requestid"
+	"github.com/oschwald/maxminddb-golang"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/oschwald/maxminddb-golang"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"time"
 )
 
-// CaddyTracking Module
 type CaddyTracking struct {
-	Logger *logging.Logger
-	dbInst *maxminddb.Reader
+	Logger         *logging.Logger
+	dbInst         *maxminddb.Reader
+	RequestIDModule *requestid.RequestID
 }
 
 func init() {
@@ -35,35 +40,36 @@ func (m *CaddyTracking) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
+	m.RequestIDModule = new(requestid.RequestID)
+	err = m.RequestIDModule.Provision(ctx)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 func (m *CaddyTracking) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-
-    // Start a timer to track request duration
+	err := m.RequestIDModule.ServeHTTP(w, r, nil)
+	if err != nil {
+		return err
+	}
 	startTime := time.Now()
-    // Call the next handler in the chain and capture the response
 	rec := httptest.NewRecorder()
-	err := next.ServeHTTP(rec, r)
+	err = next.ServeHTTP(rec, r)
 	if err != nil {
 		return err
 	}
 	duration := time.Since(startTime)
-    
-	// Existing code for IP and GeoIP
 	remoteIp, _, _ := net.SplitHostPort(r.RemoteAddr)
 	addr := net.ParseIP(remoteIp)
 	if addr == nil {
 		return next.ServeHTTP(w, r)
 	}
-
-	var record Record // Record is assumed to be in the same package or imported
-	err := m.dbInst.Lookup(addr, &record)
+	var record Record
+	err = m.dbInst.Lookup(addr, &record)
 	if err != nil {
 		return next.ServeHTTP(w, r)
 	}
-
-	// Additional tracking details
 	httpVersion := r.Proto
 	referrer := r.Referer()
 	contentType := r.Header.Get("Content-Type")
@@ -73,15 +79,13 @@ func (m *CaddyTracking) ServeHTTP(w http.ResponseWriter, r *http.Request, next c
 		cookieNames = append(cookieNames, cookie.Name)
 	}
 	cookies := "Cookies: " + strings.Join(cookieNames, ", ")
-    host := r.Host
+	host := r.Host
 	contentLength := r.ContentLength
 	authorization := r.Header.Get("Authorization")
 	acceptEncoding := r.Header.Get("Accept-Encoding")
 	acceptLanguage := r.Header.Get("Accept-Language")
-	customHeader := r.Header.Get("X-Custom-Header")  // Replace with your actual custom header name
+	customHeader := r.Header.Get("X-Custom-Header")
 	statusCode := rec.Code
-
-	// Log the tracked details
 	m.Logger.Info("Tracking request",
 		"method", r.Method,
 		"uri", r.RequestURI,
@@ -96,22 +100,19 @@ func (m *CaddyTracking) ServeHTTP(w http.ResponseWriter, r *http.Request, next c
 		"cookies", cookies,
 		"host", host,
 		"content_length", contentLength,
-		"authorization", authorization,  // Caution: This could be sensitive data
+		"authorization", authorization,
 		"accept_encoding", acceptEncoding,
 		"accept_language", acceptLanguage,
 		"custom_header", customHeader,
 		"time_taken", duration.String(),
 		"status_code", statusCode,
 	)
-
-    	// Copy the recorded response to the original response writer
 	for k, v := range rec.Header() {
 		w.Header()[k] = v
 	}
 	w.WriteHeader(rec.Code)
 	_, _ = io.Copy(w, rec.Body)
-
 	return nil
-
-	return next.ServeHTTP(w, r)
 }
+
+func main() {}
